@@ -9,6 +9,9 @@ import os
 import base64
 from io import BytesIO
 import traceback
+import pandas as pd
+import requests
+from urllib.parse import urlparse
 
 app = Flask(__name__, template_folder='../templates')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 最大 16MB
@@ -174,6 +177,138 @@ def upload():
             }), 500
 
     return jsonify({'error': '未知错误'}), 500
+
+
+@app.route('/batch_upload', methods=['POST'])
+def batch_upload():
+    """处理批量上传：读取表格并检测多张图片"""
+    if 'file' not in request.files:
+        return jsonify({'error': '没有上传文件'}), 400
+
+    file = request.files['file']
+
+    if file.filename == '':
+        return jsonify({'error': '没有选择文件'}), 400
+
+    try:
+        # 读取表格文件
+        filename = file.filename.lower()
+
+        if filename.endswith('.csv'):
+            df = pd.read_csv(file)
+        elif filename.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(file)
+        else:
+            return jsonify({'error': '不支持的文件格式，请上传 CSV 或 Excel 文件'}), 400
+
+        # 查找包含图片链接的列
+        image_column = None
+        possible_columns = ['url', 'image_url', 'img_url', 'link', 'image', 'img', '图片', '图片链接', '链接']
+
+        # 首先尝试精确匹配（不区分大小写）
+        for col in df.columns:
+            if col.lower() in [pc.lower() for pc in possible_columns]:
+                image_column = col
+                break
+
+        # 如果没找到，尝试模糊匹配
+        if image_column is None:
+            for col in df.columns:
+                col_lower = col.lower()
+                if any(keyword in col_lower for keyword in ['url', 'link', 'image', 'img', '图片', '链接']):
+                    image_column = col
+                    break
+
+        # 如果还是没找到，使用第一列
+        if image_column is None:
+            if len(df.columns) > 0:
+                image_column = df.columns[0]
+            else:
+                return jsonify({'error': '表格为空或没有找到图片链接列'}), 400
+
+        # 提取图片URL列表
+        image_urls = df[image_column].dropna().tolist()
+
+        if not image_urls:
+            return jsonify({'error': f'在列 "{image_column}" 中没有找到有效的图片链接'}), 400
+
+        # 批量检测
+        results = []
+        total = len(image_urls)
+        success_count = 0
+        failed_count = 0
+        compliant_count = 0
+        non_compliant_count = 0
+
+        for idx, url in enumerate(image_urls, 1):
+            result_item = {
+                'index': idx,
+                'url': str(url),
+                'status': 'pending'
+            }
+
+            try:
+                # 下载图片
+                response = requests.get(str(url), timeout=10)
+                response.raise_for_status()
+
+                # 检测图片
+                image_data = response.content
+                check_result = check_image_compliance(image_data)
+
+                result_item['status'] = 'success'
+                result_item['compliant'] = check_result['compliant']
+                result_item['errors'] = check_result['errors']
+                result_item['warnings'] = check_result['warnings']
+                result_item['info'] = {
+                    'width': check_result['info'].get('width'),
+                    'height': check_result['info'].get('height'),
+                    'original_width': check_result['info'].get('original_width'),
+                    'original_height': check_result['info'].get('original_height'),
+                    'resized': check_result['info'].get('resized'),
+                    'out_of_bounds_count': check_result['info'].get('out_of_bounds_count', 0)
+                }
+
+                # 添加缩略图（缩小版本以节省带宽）
+                if 'resized_image' in check_result['info']:
+                    result_item['preview'] = check_result['info']['resized_image']
+
+                success_count += 1
+                if check_result['compliant']:
+                    compliant_count += 1
+                else:
+                    non_compliant_count += 1
+
+            except requests.exceptions.RequestException as e:
+                result_item['status'] = 'failed'
+                result_item['error'] = f'下载图片失败: {str(e)}'
+                failed_count += 1
+            except Exception as e:
+                result_item['status'] = 'failed'
+                result_item['error'] = f'检测失败: {str(e)}'
+                failed_count += 1
+
+            results.append(result_item)
+
+        # 返回批量检测结果
+        return jsonify({
+            'success': True,
+            'summary': {
+                'total': total,
+                'success': success_count,
+                'failed': failed_count,
+                'compliant': compliant_count,
+                'non_compliant': non_compliant_count
+            },
+            'column_used': image_column,
+            'results': results
+        })
+
+    except Exception as e:
+        return jsonify({
+            'error': f'处理表格失败: {str(e)}',
+            'traceback': traceback.format_exc()
+        }), 500
 
 
 # Vercel serverless 函数入口

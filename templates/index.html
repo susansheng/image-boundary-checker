@@ -279,6 +279,146 @@
             margin-bottom: 15px;
             color: #333;
         }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #eee;
+        }
+
+        .tab-button {
+            padding: 12px 24px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1em;
+            color: #666;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+
+        .tab-button:hover {
+            color: #667eea;
+        }
+
+        .tab-button.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+            font-weight: bold;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .batch-upload-area {
+            border: 3px dashed #ffc107;
+            border-radius: 15px;
+            padding: 60px 20px;
+            text-align: center;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            margin-bottom: 30px;
+        }
+
+        .batch-upload-area:hover,
+        .batch-upload-area.dragover {
+            border-color: #ff9800;
+            background: #fff8e1;
+        }
+
+        .batch-results-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        .batch-results-table th,
+        .batch-results-table td {
+            padding: 12px;
+            text-align: left;
+            border: 1px solid #ddd;
+        }
+
+        .batch-results-table th {
+            background: #667eea;
+            color: white;
+            font-weight: bold;
+        }
+
+        .batch-results-table tr:nth-child(even) {
+            background: #f8f9fa;
+        }
+
+        .batch-results-table tr:hover {
+            background: #e9ecef;
+        }
+
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: bold;
+        }
+
+        .status-success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-failed {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .summary-box {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-around;
+            flex-wrap: wrap;
+        }
+
+        .summary-item {
+            text-align: center;
+            padding: 10px 20px;
+        }
+
+        .summary-item .number {
+            font-size: 2em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .summary-item .label {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+
+        .batch-preview {
+            max-width: 100px;
+            cursor: pointer;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+        }
+
+        .batch-preview:hover {
+            border-color: #667eea;
+            transform: scale(1.05);
+        }
     </style>
 </head>
 <body>
@@ -298,6 +438,15 @@
                 </ul>
             </div>
 
+            <!-- 选项卡切换 -->
+            <div class="tabs">
+                <button class="tab-button active" onclick="switchTab('single')">📷 单张检测</button>
+                <button class="tab-button" onclick="switchTab('batch')">📊 批量检测</button>
+            </div>
+
+            <!-- 单张检测内容 -->
+            <div class="tab-content active" id="singleTab">
+
             <div class="upload-area" id="uploadArea">
                 <div class="upload-icon">📤</div>
                 <div class="upload-text">点击或拖拽图片到此处上传</div>
@@ -316,6 +465,30 @@
                 <div class="image-preview" id="imagePreview"></div>
                 <div class="info-box" id="infoBox"></div>
             </div>
+            </div>
+
+            <!-- 批量检测内容 -->
+            <div class="tab-content" id="batchTab">
+                <div class="batch-upload-area" id="batchUploadArea">
+                    <div class="upload-icon">📊</div>
+                    <div class="upload-text">点击或拖拽表格文件到此处上传</div>
+                    <div class="upload-hint">支持 CSV、Excel (xlsx/xls) 格式<br>表格需包含图片链接列</div>
+                    <input type="file" id="batchFileInput" accept=".csv,.xlsx,.xls">
+                </div>
+
+                <div class="loading" id="batchLoading">
+                    <div class="spinner"></div>
+                    <p>正在批量检测图片...</p>
+                </div>
+
+                <div class="result" id="batchResult" style="background: white; border: none;">
+                    <!-- 汇总信息 -->
+                    <div id="batchSummary"></div>
+
+                    <!-- 批量结果表格 -->
+                    <div id="batchResultsContainer"></div>
+                </div>
+            </div>
 
             <div class="template-section">
                 <h3>📐 模板示例</h3>
@@ -328,6 +501,7 @@
     </div>
 
     <script>
+        // 单张检测相关元素
         const uploadArea = document.getElementById('uploadArea');
         const fileInput = document.getElementById('fileInput');
         const loading = document.getElementById('loading');
@@ -337,6 +511,33 @@
         const imagePreview = document.getElementById('imagePreview');
         const infoBox = document.getElementById('infoBox');
         const templateImage = document.getElementById('templateImage');
+
+        // 批量检测相关元素
+        const batchUploadArea = document.getElementById('batchUploadArea');
+        const batchFileInput = document.getElementById('batchFileInput');
+        const batchLoading = document.getElementById('batchLoading');
+        const batchResult = document.getElementById('batchResult');
+        const batchSummary = document.getElementById('batchSummary');
+        const batchResultsContainer = document.getElementById('batchResultsContainer');
+
+        // 选项卡切换
+        function switchTab(tab) {
+            const tabs = document.querySelectorAll('.tab-button');
+            const contents = document.querySelectorAll('.tab-content');
+
+            tabs.forEach(t => t.classList.remove('active'));
+            contents.forEach(c => c.classList.remove('active'));
+
+            if (tab === 'single') {
+                tabs[0].classList.add('active');
+                document.getElementById('singleTab').classList.add('active');
+            } else if (tab === 'batch') {
+                tabs[1].classList.add('active');
+                document.getElementById('batchTab').classList.add('active');
+            }
+        }
+
+        // ===== 单张检测逻辑 =====
 
         // 加载模板图片
         fetch('/template')
@@ -499,6 +700,224 @@
             resultContent.innerHTML = `<p style="color: #721c24;">${message}</p>`;
             imagePreview.innerHTML = '';
             infoBox.style.display = 'none';
+        }
+
+        // ===== 批量检测逻辑 =====
+
+        // 点击批量上传区域
+        batchUploadArea.addEventListener('click', () => {
+            batchFileInput.click();
+        });
+
+        // 批量文件选择
+        batchFileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                uploadBatchFile(e.target.files[0]);
+            }
+        });
+
+        // 批量拖拽事件
+        batchUploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            batchUploadArea.classList.add('dragover');
+        });
+
+        batchUploadArea.addEventListener('dragleave', () => {
+            batchUploadArea.classList.remove('dragover');
+        });
+
+        batchUploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            batchUploadArea.classList.remove('dragover');
+
+            if (e.dataTransfer.files.length > 0) {
+                uploadBatchFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        // 上传批量文件
+        function uploadBatchFile(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            // 显示加载状态
+            batchLoading.classList.add('active');
+            batchResult.style.display = 'none';
+
+            fetch('/batch_upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                batchLoading.classList.remove('active');
+                displayBatchResults(data);
+            })
+            .catch(error => {
+                batchLoading.classList.remove('active');
+                displayBatchError('上传失败: ' + error.message);
+            });
+        }
+
+        // 显示批量检测结果
+        function displayBatchResults(data) {
+            if (data.error) {
+                displayBatchError(data.error);
+                return;
+            }
+
+            batchResult.style.display = 'block';
+
+            // 显示汇总信息
+            const summary = data.summary;
+            let summaryHtml = '<div class="summary-box">';
+            summaryHtml += `
+                <div class="summary-item">
+                    <div class="number">${summary.total}</div>
+                    <div class="label">总数</div>
+                </div>
+                <div class="summary-item">
+                    <div class="number">${summary.success}</div>
+                    <div class="label">成功检测</div>
+                </div>
+                <div class="summary-item">
+                    <div class="number">${summary.compliant}</div>
+                    <div class="label">✓ 符合规范</div>
+                </div>
+                <div class="summary-item">
+                    <div class="number">${summary.non_compliant}</div>
+                    <div class="label">✗ 不符合规范</div>
+                </div>
+                <div class="summary-item">
+                    <div class="number">${summary.failed}</div>
+                    <div class="label">失败</div>
+                </div>
+            `;
+            summaryHtml += '</div>';
+            summaryHtml += `<p style="color: #666; margin-bottom: 10px;">使用的图片链接列: <strong>${data.column_used}</strong></p>`;
+            batchSummary.innerHTML = summaryHtml;
+
+            // 显示结果表格
+            let tableHtml = '<table class="batch-results-table">';
+            tableHtml += `
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>图片链接</th>
+                        <th>状态</th>
+                        <th>结果</th>
+                        <th>尺寸</th>
+                        <th>超出像素</th>
+                        <th>预览</th>
+                    </tr>
+                </thead>
+                <tbody>
+            `;
+
+            data.results.forEach(item => {
+                let statusBadge = '';
+                let resultText = '';
+                let sizeText = '-';
+                let outOfBoundsText = '-';
+                let previewHtml = '';
+
+                if (item.status === 'success') {
+                    if (item.compliant) {
+                        statusBadge = '<span class="status-badge status-success">✓ 符合规范</span>';
+                        resultText = '<span style="color: #155724;">通过</span>';
+                    } else {
+                        statusBadge = '<span class="status-badge status-error">✗ 不符合</span>';
+                        resultText = item.errors.join('; ');
+                    }
+
+                    if (item.info) {
+                        sizeText = `${item.info.original_width}×${item.info.original_height}`;
+                        if (item.info.resized) {
+                            sizeText += ' → 300×200';
+                        }
+                        outOfBoundsText = item.info.out_of_bounds_count || '0';
+                    }
+
+                    if (item.preview) {
+                        previewHtml = `<img src="${item.preview}" class="batch-preview" onclick="showPreviewModal('${item.preview}', '${item.url}')" alt="预览">`;
+                    }
+                } else {
+                    statusBadge = '<span class="status-badge status-failed">失败</span>';
+                    resultText = `<span style="color: #721c24;">${item.error}</span>`;
+                }
+
+                const urlShort = item.url.length > 50 ? item.url.substring(0, 50) + '...' : item.url;
+
+                tableHtml += `
+                    <tr>
+                        <td>${item.index}</td>
+                        <td><a href="${item.url}" target="_blank" title="${item.url}">${urlShort}</a></td>
+                        <td>${statusBadge}</td>
+                        <td>${resultText}</td>
+                        <td>${sizeText}</td>
+                        <td>${outOfBoundsText}</td>
+                        <td>${previewHtml}</td>
+                    </tr>
+                `;
+            });
+
+            tableHtml += '</tbody></table>';
+            batchResultsContainer.innerHTML = tableHtml;
+        }
+
+        // 显示批量检测错误
+        function displayBatchError(message) {
+            batchResult.style.display = 'block';
+            batchSummary.innerHTML = `
+                <div class="result error">
+                    <div class="result-title">✗ 错误</div>
+                    <div class="result-content">
+                        <p style="color: #721c24;">${message}</p>
+                    </div>
+                </div>
+            `;
+            batchResultsContainer.innerHTML = '';
+        }
+
+        // 显示预览模态框（简单实现）
+        function showPreviewModal(imageSrc, url) {
+            const modal = window.open('', '_blank', 'width=600,height=600');
+            modal.document.write(`
+                <html>
+                    <head>
+                        <title>图片预览</title>
+                        <style>
+                            body {
+                                margin: 0;
+                                padding: 20px;
+                                display: flex;
+                                flex-direction: column;
+                                align-items: center;
+                                background: #f5f5f5;
+                            }
+                            img {
+                                max-width: 100%;
+                                border: 2px solid #ddd;
+                                border-radius: 10px;
+                                box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+                            }
+                            .url {
+                                margin-top: 20px;
+                                padding: 10px;
+                                background: white;
+                                border-radius: 5px;
+                                word-break: break-all;
+                                font-size: 0.9em;
+                                color: #666;
+                            }
+                        </style>
+                    </head>
+                    <body>
+                        <img src="${imageSrc}" alt="预览">
+                        <div class="url">${url}</div>
+                    </body>
+                </html>
+            `);
         }
     </script>
 </body>
