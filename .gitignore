@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Flask
+instance/
+.webassets-cache
+.env
+.flaskenv
+
+# Vercel
+.vercel
+
+# Local test files
+web_validator.py
+image_validator.py
+generate_test_images.py
+test_auto_resize.py
+create_demo_images.py
+explain_detection.py
+port_manager.py
+start_server.sh
+
+# Documentation (keep in repo but listed for awareness)
+# *.md files are kept for documentation
+
+# Test images (keeping test images in repo for demo)
+# But you might want to exclude large test files
