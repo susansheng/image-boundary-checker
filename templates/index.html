@@ -539,9 +539,10 @@
 
         .card-image {
             width: 100%;
-            height: 180px;
-            object-fit: cover;
-            background: #f8f9fa;
+            height: auto;
+            object-fit: contain;
+            background: #475565;
+            padding: 10px;
         }
 
         .card-content {
@@ -1219,7 +1220,7 @@
             if (result.preview) {
                 imageHtml = `<img src="${result.preview}" class="card-image" alt="检测结果">`;
             } else {
-                imageHtml = `<div class="card-image" style="display: flex; align-items: center; justify-content: center; color: #999;">无预览图</div>`;
+                imageHtml = `<div class="card-image" style="display: flex; align-items: center; justify-content: center; color: #fff; background: #475565; min-height: 180px;">无预览图</div>`;
             }
 
             let statusHtml = '';
