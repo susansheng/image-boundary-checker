@@ -357,10 +357,5 @@ def batch_upload():
         }), 500
 
 
-# Vercel serverless 函数入口
-def handler(request):
-    return app(request)
-
-
-if __name__ == '__main__':
-    app.run(debug=True)
+# Flask app 会被 Vercel 自动检测和使用
+# 不需要额外的 handler 函数
