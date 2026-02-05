@@ -25,6 +25,35 @@ SAFE_AREA = {
 }
 
 
+def generate_template_image():
+    """
+    生成模板图片：300x200，带红色边框标识安全区域
+    """
+    # 创建白色背景图片
+    img = Image.new('RGB', (300, 200), (255, 255, 255))
+    draw = ImageDraw.Draw(img)
+
+    # 红色
+    red_color = (232, 115, 107)
+
+    # 绘制红色边框区域
+    # 上边框
+    draw.rectangle([0, 0, 299, SAFE_AREA['top']-1], fill=red_color)
+    # 下边框
+    draw.rectangle([0, SAFE_AREA['bottom']+1, 299, 199], fill=red_color)
+    # 左边框
+    draw.rectangle([0, SAFE_AREA['top'], SAFE_AREA['left']-1, SAFE_AREA['bottom']], fill=red_color)
+    # 右边框
+    draw.rectangle([SAFE_AREA['right']+1, SAFE_AREA['top'], 299, SAFE_AREA['bottom']], fill=red_color)
+
+    # 转换为 base64
+    buffered = BytesIO()
+    img.save(buffered, format="PNG")
+    img_str = base64.b64encode(buffered.getvalue()).decode()
+
+    return f"data:image/png;base64,{img_str}"
+
+
 def check_image_compliance(image_data):
     """
     检查图片是否符合规范
@@ -144,6 +173,23 @@ def check_image_compliance(image_data):
 def index():
     """主页"""
     return render_template('index.html', safe_area=SAFE_AREA)
+
+
+@app.route('/template')
+def get_template():
+    """获取模板图片"""
+    try:
+        template_image = generate_template_image()
+        return jsonify({
+            'success': True,
+            'image': template_image,
+            'safe_area': SAFE_AREA
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 
 @app.route('/upload', methods=['POST'])
