@@ -6,12 +6,24 @@
 from flask import Flask, render_template, request, jsonify
 from PIL import Image, ImageDraw
 import os
+import sys
 import base64
 from io import BytesIO
 import traceback
 import pandas as pd
 import requests
 from urllib.parse import urlparse
+
+# Add parent directory to path to import image_fixer
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from image_fixer import (
+    smart_crop_to_safe_area,
+    add_padding_to_safe_area,
+    smart_fit_to_safe_area,
+    extract_filename_from_url,
+    sanitize_filename,
+    get_fix_description
+)
 
 app = Flask(__name__, template_folder='../templates')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 最大 16MB
@@ -52,6 +64,49 @@ def generate_template_image():
     img_str = base64.b64encode(buffered.getvalue()).decode()
 
     return f"data:image/png;base64,{img_str}"
+
+
+def add_template_border(img):
+    """
+    给预览图添加红色边框和绿色边界线
+    """
+    preview_img = img.copy().convert('RGBA')
+
+    # 创建红色边框叠加层
+    overlay = Image.new('RGBA', (300, 200), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    # 绘制红色边框区域（半透明红色）
+    red_color = (232, 115, 107, 120)
+
+    # 上边框
+    draw.rectangle([0, 0, 299, SAFE_AREA['top']-1], fill=red_color)
+    # 下边框
+    draw.rectangle([0, SAFE_AREA['bottom']+1, 299, 199], fill=red_color)
+    # 左边框
+    draw.rectangle([0, SAFE_AREA['top'], SAFE_AREA['left']-1, SAFE_AREA['bottom']], fill=red_color)
+    # 右边框
+    draw.rectangle([SAFE_AREA['right']+1, SAFE_AREA['top'], 299, SAFE_AREA['bottom']], fill=red_color)
+
+    # 绘制安全区域的绿色边界线
+    green_color = (0, 255, 0, 180)
+    # 上边界
+    draw.line([SAFE_AREA['left'], SAFE_AREA['top'], SAFE_AREA['right'], SAFE_AREA['top']],
+              fill=green_color, width=2)
+    # 下边界
+    draw.line([SAFE_AREA['left'], SAFE_AREA['bottom'], SAFE_AREA['right'], SAFE_AREA['bottom']],
+              fill=green_color, width=2)
+    # 左边界
+    draw.line([SAFE_AREA['left'], SAFE_AREA['top'], SAFE_AREA['left'], SAFE_AREA['bottom']],
+              fill=green_color, width=2)
+    # 右边界
+    draw.line([SAFE_AREA['right'], SAFE_AREA['top'], SAFE_AREA['right'], SAFE_AREA['bottom']],
+              fill=green_color, width=2)
+
+    # 叠加红色边框到预览图
+    preview_img = Image.alpha_composite(preview_img, overlay)
+
+    return preview_img
 
 
 def check_image_compliance(image_data):
@@ -117,6 +172,35 @@ def check_image_compliance(image_data):
 
             # 保存前10个超出位置作为示例
             result['info']['out_of_bounds_samples'] = out_of_bounds_pixels[:10]
+
+        # 检查图片是否过小（内容未撑满安全区域）
+        # 找到所有不透明像素的边界框
+        min_x, min_y, max_x, max_y = width, height, 0, 0
+        has_content = False
+        for y in range(height):
+            for x in range(width):
+                pixel = img.getpixel((x, y))
+                alpha = pixel[3] if len(pixel) == 4 else 255
+                # 只考虑不透明像素（alpha > 200）
+                if alpha > 200:
+                    has_content = True
+                    min_x = min(min_x, x)
+                    min_y = min(min_y, y)
+                    max_x = max(max_x, x)
+                    max_y = max(max_y, y)
+
+        if has_content:
+            content_width = max_x - min_x + 1
+            content_height = max_y - min_y + 1
+            safe_width = SAFE_AREA['right'] - SAFE_AREA['left']
+            safe_height = SAFE_AREA['bottom'] - SAFE_AREA['top']
+
+            # 如果车图太小（宽度和高度都小于安全区域的98%）
+            if (content_width < safe_width * 0.98 and
+                content_height < safe_height * 0.98):
+                result['compliant'] = False
+                result['errors'].append(f"图片过小，没有撑满安全区域（车图尺寸: {content_width}x{content_height}，安全区: {safe_width}x{safe_height}）")
+                result['info']['too_small'] = True
 
         # 生成带红色边框的预览图（叠加模板边框）
         preview_img = img.copy().convert('RGBA')
@@ -189,6 +273,179 @@ def get_template():
         return jsonify({
             'success': False,
             'error': str(e)
+        }), 500
+
+
+@app.route('/fix_image', methods=['POST'])
+def fix_image():
+    """
+    单张图片修复
+    请求: file (图片文件), strategy (修复策略)
+    响应: {success, fixed_image, preview_image, fix_info, download_filename}
+    """
+    if 'file' not in request.files:
+        return jsonify({'error': '没有上传文件'}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': '没有选择文件'}), 400
+
+    strategy = request.form.get('strategy', 'smart_crop')
+
+    try:
+        # 读取原图
+        image_data = file.read()
+        img = Image.open(BytesIO(image_data))
+
+        original_width, original_height = img.size
+
+        # 检测原图是否已经符合规范
+        original_check = check_image_compliance(image_data)
+
+        # 应用修复策略
+        if strategy == 'smart_crop':
+            fixed_img = smart_crop_to_safe_area(img)
+        elif strategy == 'add_padding':
+            fixed_img = add_padding_to_safe_area(img)
+        elif strategy == 'smart_fit':
+            fixed_img = smart_fit_to_safe_area(img)
+        else:
+            return jsonify({'error': f'不支持的修复策略: {strategy}'}), 400
+
+        # 将修复后的图片转换为PNG格式（原始尺寸）
+        fixed_buffer = BytesIO()
+        fixed_img.save(fixed_buffer, format='PNG')
+        fixed_buffer.seek(0)
+
+        # 生成base64编码的修复后图片（用于下载）
+        fixed_img_str = base64.b64encode(fixed_buffer.getvalue()).decode()
+        fixed_image_data = f"data:image/png;base64,{fixed_img_str}"
+
+        # 生成预览图（300x200，带红色边框）
+        preview_img = fixed_img.resize((300, 200), Image.Resampling.LANCZOS)
+        if preview_img.mode != 'RGBA':
+            preview_img = preview_img.convert('RGBA')
+
+        preview_with_border = add_template_border(preview_img)
+
+        preview_buffer = BytesIO()
+        preview_with_border.save(preview_buffer, format='PNG')
+        preview_img_str = base64.b64encode(preview_buffer.getvalue()).decode()
+        preview_image_data = f"data:image/png;base64,{preview_img_str}"
+
+        # 生成文件名
+        original_filename = file.filename or 'image'
+        name_without_ext = original_filename.rsplit('.', 1)[0] if '.' in original_filename else original_filename
+        download_filename = f"{sanitize_filename(name_without_ext)}_fixed.png"
+
+        # 返回结果
+        return jsonify({
+            'success': True,
+            'original_compliant': original_check['compliant'],
+            'fixed_image': fixed_image_data,
+            'preview_image': preview_image_data,
+            'download_filename': download_filename,
+            'fix_info': {
+                'strategy': get_fix_description(strategy),
+                'original_size': [original_width, original_height],
+                'changes_made': '已应用修复策略，内容调整到安全区域内'
+            }
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'修复失败: {str(e)}',
+            'traceback': traceback.format_exc()
+        }), 500
+
+
+@app.route('/fix_from_url', methods=['POST'])
+def fix_from_url():
+    """
+    从URL修复图片（用于批量修复）
+    请求: {url, strategy}
+    响应: 同 /fix_image
+    """
+    data = request.get_json()
+
+    if not data or 'url' not in data:
+        return jsonify({'error': '缺少URL参数'}), 400
+
+    url = data['url']
+    strategy = data.get('strategy', 'smart_crop')
+
+    try:
+        # 下载图片
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        image_data = response.content
+
+        img = Image.open(BytesIO(image_data))
+        original_width, original_height = img.size
+
+        # 检测原图是否已经符合规范
+        original_check = check_image_compliance(image_data)
+
+        # 应用修复策略
+        if strategy == 'smart_crop':
+            fixed_img = smart_crop_to_safe_area(img)
+        elif strategy == 'add_padding':
+            fixed_img = add_padding_to_safe_area(img)
+        elif strategy == 'smart_fit':
+            fixed_img = smart_fit_to_safe_area(img)
+        else:
+            return jsonify({'error': f'不支持的修复策略: {strategy}'}), 400
+
+        # 将修复后的图片转换为PNG格式（原始尺寸）
+        fixed_buffer = BytesIO()
+        fixed_img.save(fixed_buffer, format='PNG')
+        fixed_buffer.seek(0)
+
+        # 生成base64编码的修复后图片（用于下载）
+        fixed_img_str = base64.b64encode(fixed_buffer.getvalue()).decode()
+        fixed_image_data = f"data:image/png;base64,{fixed_img_str}"
+
+        # 生成预览图（300x200，带红色边框）
+        preview_img = fixed_img.resize((300, 200), Image.Resampling.LANCZOS)
+        if preview_img.mode != 'RGBA':
+            preview_img = preview_img.convert('RGBA')
+
+        preview_with_border = add_template_border(preview_img)
+
+        preview_buffer = BytesIO()
+        preview_with_border.save(preview_buffer, format='PNG')
+        preview_img_str = base64.b64encode(preview_buffer.getvalue()).decode()
+        preview_image_data = f"data:image/png;base64,{preview_img_str}"
+
+        # 从URL提取文件名
+        filename = extract_filename_from_url(url)
+        download_filename = f"{filename}.png"
+
+        # 返回结果
+        return jsonify({
+            'success': True,
+            'original_compliant': original_check['compliant'],
+            'fixed_image': fixed_image_data,
+            'preview_image': preview_image_data,
+            'download_filename': download_filename,
+            'fix_info': {
+                'strategy': get_fix_description(strategy),
+                'original_size': [original_width, original_height],
+                'changes_made': '已应用修复策略，内容调整到安全区域内'
+            }
+        })
+
+    except requests.exceptions.RequestException as e:
+        return jsonify({
+            'success': False,
+            'error': f'下载图片失败: {str(e)}'
+        }), 500
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'修复失败: {str(e)}',
+            'traceback': traceback.format_exc()
         }), 500
 
 

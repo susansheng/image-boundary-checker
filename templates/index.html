@@ -829,6 +829,52 @@
                 <div class="image-preview" id="imagePreview"></div>
                 <div class="info-box" id="infoBox"></div>
             </div>
+
+            <!-- 修复控件 -->
+            <div id="fixControls" style="display: none; margin-top: 20px;">
+                <div style="background: rgba(91, 108, 245, 0.1); border: 1px solid rgba(91, 108, 245, 0.3); padding: 20px; border-radius: 12px;">
+                    <h4 style="color: #FFFFFF; margin-bottom: 16px;">🔧 自动修复</h4>
+
+                    <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+                        <select id="fixStrategy" class="button" style="padding: 10px 20px; background: rgba(30, 41, 59, 0.8); color: #FFFFFF; border: 1px solid rgba(91, 108, 245, 0.3);">
+                            <option value="smart_fit">智能适配（推荐）</option>
+                            <option value="smart_crop">智能裁剪</option>
+                            <option value="add_padding">添加白边</option>
+                        </select>
+
+                        <button onclick="fixCurrentImage()" class="button">
+                            开始修复
+                        </button>
+                    </div>
+
+                    <p style="color: #94A3B8; font-size: 0.9em; margin-top: 12px;">
+                        💡 智能适配：自动识别右下角水印，居中调整并等比缩放车图至安全区<br>
+                        修复后的图片将保持原始尺寸，并以PNG格式下载
+                    </p>
+                </div>
+            </div>
+
+            <!-- 修复结果显示 -->
+            <div id="fixResult" style="display: none; margin-top: 20px;">
+                <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); padding: 20px; border-radius: 12px;">
+                    <h4 style="color: #10B981; margin-bottom: 16px;">✓ 修复完成</h4>
+
+                    <div class="image-preview">
+                        <div class="preview-box">
+                            <h4>修复后预览 (300 × 200)</h4>
+                            <img id="fixedPreview" src="" alt="修复后预览">
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 16px; text-align: center;">
+                        <button onclick="downloadFixedImage()" class="button" style="background: #10B981;">
+                            📥 下载修复后的图片（原始尺寸）
+                        </button>
+                    </div>
+
+                    <div id="fixInfo" class="info-box" style="margin-top: 16px;"></div>
+                </div>
+            </div>
             </div>
 
             <!-- 批量检测内容 -->
@@ -902,6 +948,11 @@
     </div>
 
     <script>
+        // 全局变量存储当前图片和修复结果
+        let currentImageFile = null;
+        let fixedImageData = null;
+        let fixedImageFilename = 'image_fixed.png';
+
         // 单张检测相关元素
         const uploadArea = document.getElementById('uploadArea');
         const fileInput = document.getElementById('fileInput');
@@ -982,6 +1033,8 @@
 
         // 上传文件
         function uploadFile(file) {
+            currentImageFile = file;  // 保存文件引用
+
             const formData = new FormData();
             formData.append('file', file);
 
@@ -1091,6 +1144,25 @@
                 infoBox.innerHTML = infoHtml;
                 infoBox.style.display = 'block';
             }
+
+            // 如果检测不通过，显示修复控件
+            if (!data.compliant) {
+                const fixControls = document.getElementById('fixControls');
+                if (fixControls) {
+                    fixControls.style.display = 'block';
+                }
+            } else {
+                const fixControls = document.getElementById('fixControls');
+                if (fixControls) {
+                    fixControls.style.display = 'none';
+                }
+            }
+
+            // 隐藏之前的修复结果
+            const fixResult = document.getElementById('fixResult');
+            if (fixResult) {
+                fixResult.style.display = 'none';
+            }
         }
 
         // 显示错误
@@ -1101,6 +1173,106 @@
             resultContent.innerHTML = `<p style="color: #EF4444;">${message}</p>`;
             imagePreview.innerHTML = '';
             infoBox.style.display = 'none';
+        }
+
+        // ===== 图片修复功能 =====
+
+        // 修复当前图片
+        function fixCurrentImage() {
+            if (!currentImageFile) {
+                alert('请先上传图片');
+                return;
+            }
+
+            const strategy = document.getElementById('fixStrategy').value;
+            const formData = new FormData();
+            formData.append('file', currentImageFile);
+            formData.append('strategy', strategy);
+
+            loading.classList.add('active');
+            document.getElementById('fixResult').style.display = 'none';
+
+            fetch('/fix_image', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                loading.classList.remove('active');
+                if (data.success) {
+                    displayFixResult(data);
+                } else {
+                    alert('修复失败: ' + (data.error || data.message));
+                }
+            })
+            .catch(error => {
+                loading.classList.remove('active');
+                alert('修复失败: ' + error.message);
+            });
+        }
+
+        // 显示修复结果（使用安全的DOM方法）
+        function displayFixResult(data) {
+            if (data.original_compliant) {
+                alert('图片已符合规范，无需修复');
+                return;
+            }
+
+            const fixResultDiv = document.getElementById('fixResult');
+            fixResultDiv.style.display = 'block';
+
+            // 显示预览图
+            document.getElementById('fixedPreview').src = data.preview_image;
+
+            // 保存修复后的图片数据
+            fixedImageData = data.fixed_image;
+            fixedImageFilename = data.download_filename;
+
+            // 使用安全的DOM方法显示修复信息（避免XSS）
+            const fixInfoDiv = document.getElementById('fixInfo');
+            fixInfoDiv.textContent = '';  // 清空
+
+            const h4 = document.createElement('h4');
+            h4.textContent = '修复详情';
+            fixInfoDiv.appendChild(h4);
+
+            const createInfoItem = (label, value) => {
+                const div = document.createElement('div');
+                div.className = 'info-item';
+                div.textContent = `${label}: ${value}`;
+                return div;
+            };
+
+            fixInfoDiv.appendChild(createInfoItem('修复策略', data.fix_info.strategy));
+            fixInfoDiv.appendChild(createInfoItem('原始尺寸', `${data.fix_info.original_size[0]} × ${data.fix_info.original_size[1]} 像素`));
+            fixInfoDiv.appendChild(createInfoItem('修改内容', data.fix_info.changes_made));
+            fixInfoDiv.appendChild(createInfoItem('文件格式', 'PNG'));
+
+            const successDiv = document.createElement('div');
+            successDiv.className = 'info-item';
+            successDiv.style.color = '#10B981';
+            successDiv.style.fontWeight = 'bold';
+            successDiv.textContent = '✓ 修复后的图片已符合规范';
+            fixInfoDiv.appendChild(successDiv);
+
+            // 滚动到修复结果
+            fixResultDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        // 下载修复后的图片
+        function downloadFixedImage() {
+            if (!fixedImageData) {
+                alert('没有可下载的图片');
+                return;
+            }
+
+            // 从base64转换为blob并下载
+            const link = document.createElement('a');
+            link.href = fixedImageData;
+            link.download = fixedImageFilename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
         }
 
         // ===== 批量检测逻辑 =====
@@ -1443,6 +1615,21 @@
                 contentHtml = `<div class="card-info">${result.error}</div>`;
             }
 
+            // 如果不符合规范且检测成功，添加修复按钮
+            let actionButtons = '';
+            if (result.status === 'success' && !result.compliant) {
+                actionButtons = `
+                    <div style="margin-top: 12px; display: flex; gap: 8px;">
+                        <button onclick="fixBatchImage(${result.index})" class="button" style="font-size: 0.85em; padding: 6px 12px;">
+                            🔧 修复
+                        </button>
+                        <button onclick="downloadBatchImage(${result.index})" class="button" style="font-size: 0.85em; padding: 6px 12px; display: none; background: #10B981;" id="download-btn-${result.index}">
+                            📥 下载
+                        </button>
+                    </div>
+                `;
+            }
+
             card.innerHTML = `
                 ${imageHtml}
                 <div class="card-content">
@@ -1452,6 +1639,7 @@
                     <a href="${result.url}" target="_blank" class="card-url" title="${result.url}">
                         ${result.url.length > 40 ? result.url.substring(0, 40) + '...' : result.url}
                     </a>
+                    ${actionButtons}
                 </div>
             `;
 
@@ -1766,6 +1954,71 @@
                     </body>
                 </html>
             `);
+        }
+
+        // ===== 批量修复功能 =====
+
+        // 批量修复单张图片
+        function fixBatchImage(index) {
+            const result = detectionState.results[index - 1];
+            if (!result) return;
+
+            const strategy = 'smart_fit';
+            const card = event.target.closest('.result-card');
+            const originalHtml = card.innerHTML;
+
+            // 使用安全的DOM方法显示加载状态
+            card.textContent = '';
+            const loadingDiv = document.createElement('div');
+            loadingDiv.style.cssText = 'padding: 40px; text-align: center;';
+            const spinner = document.createElement('div');
+            spinner.className = 'spinner';
+            spinner.style.margin = '0 auto';
+            const loadingText = document.createElement('p');
+            loadingText.style.cssText = 'color: #94A3B8; margin-top: 16px;';
+            loadingText.textContent = '修复中...';
+            loadingDiv.appendChild(spinner);
+            loadingDiv.appendChild(loadingText);
+            card.appendChild(loadingDiv);
+
+            fetch('/fix_from_url', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({url: result.url, strategy: strategy})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    result.fixed_image = data.fixed_image;
+                    result.fixed_filename = data.download_filename;
+                    card.innerHTML = originalHtml;
+                    document.getElementById(`download-btn-${index}`).style.display = 'inline-block';
+                    alert('修复成功！点击下载按钮保存图片');
+                } else {
+                    card.innerHTML = originalHtml;
+                    alert('修复失败: ' + (data.error || '未知错误'));
+                }
+            })
+            .catch(error => {
+                card.innerHTML = originalHtml;
+                alert('修复失败: ' + error.message);
+            });
+        }
+
+        // 下载批量修复的图片
+        function downloadBatchImage(index) {
+            const result = detectionState.results[index - 1];
+            if (!result || !result.fixed_image) {
+                alert('请先修复该图片');
+                return;
+            }
+
+            const link = document.createElement('a');
+            link.href = result.fixed_image;
+            link.download = result.fixed_filename || `image_${index}_fixed.png`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
         }
     </script>
 </body>
