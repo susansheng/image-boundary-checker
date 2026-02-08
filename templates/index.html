@@ -6,6 +6,8 @@
     <title>图片规范检测工具</title>
     <!-- SheetJS库用于读取Excel -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <!-- JSZip库用于打包下载 -->
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -783,6 +785,96 @@
             border-color: #5B6CF5;
             box-shadow: 0 4px 12px rgba(91, 108, 245, 0.3);
         }
+
+        /* 批量操作按钮组 */
+        .batch-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+
+        .batch-action-button {
+            padding: 14px 28px;
+            border: none;
+            border-radius: 12px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .batch-action-button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+        }
+
+        .batch-action-button:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        .batch-action-button:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .batch-action-button.fix-all {
+            background: #5B6CF5;
+            color: white;
+        }
+
+        .batch-action-button.fix-all:hover:not(:disabled) {
+            background: #4F5FE8;
+        }
+
+        .batch-action-button.download-all {
+            background: #10B981;
+            color: white;
+        }
+
+        .batch-action-button.download-all:hover:not(:disabled) {
+            background: #059669;
+        }
+
+        /* 修复进度条 */
+        .fix-progress-container {
+            display: none;
+            margin-top: 20px;
+        }
+
+        .fix-progress-container.active {
+            display: block;
+        }
+
+        .fix-progress-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .fix-progress-header h4 {
+            color: #FFFFFF;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .fix-progress-stats {
+            display: flex;
+            gap: 16px;
+            font-size: 0.9em;
+        }
+
+        .fix-progress-stat {
+            color: #94A3B8;
+        }
+
+        .fix-progress-stat strong {
+            color: #FFFFFF;
+            font-weight: 700;
+        }
     </style>
 </head>
 <body>
@@ -848,7 +940,7 @@
                     </div>
 
                     <p style="color: #94A3B8; font-size: 0.9em; margin-top: 12px;">
-                        💡 智能适配：自动识别右下角水印，居中调整并等比缩放车图至安全区<br>
+                        💡 一键修复所有问题：自动去除水印、居中调整并等比缩放车图至安全区<br>
                         修复后的图片将保持原始尺寸，并以PNG格式下载
                     </p>
                 </div>
@@ -1615,14 +1707,19 @@
                 contentHtml = `<div class="card-info">${result.error}</div>`;
             }
 
-            // 如果不符合规范且检测成功，添加修复按钮
+            // 如果检测成功且不合规，添加操作按钮
             let actionButtons = '';
-            if (result.status === 'success' && !result.compliant) {
-                actionButtons = `
-                    <div style="margin-top: 12px; display: flex; gap: 8px;">
+            if (result.status === 'success') {
+                let fixBtn = '';
+                if (!result.compliant) {
+                    fixBtn = `
                         <button onclick="fixBatchImage(${result.index})" class="button" style="font-size: 0.85em; padding: 6px 12px;">
                             🔧 修复
-                        </button>
+                        </button>`;
+                }
+                actionButtons = `
+                    <div style="margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap;">
+                        ${fixBtn}
                         <button onclick="downloadBatchImage(${result.index})" class="button" style="font-size: 0.85em; padding: 6px 12px; display: none; background: #10B981;" id="download-btn-${result.index}">
                             📥 下载
                         </button>
@@ -1653,31 +1750,112 @@
         function onDetectionComplete() {
             progressContainer.classList.remove('active');
 
-            // 显示汇总信息
-            const summaryHtml = `
-                <div class="summary-box">
-                    <div class="summary-item">
-                        <div class="number">${detectionState.stats.total}</div>
-                        <div class="label">总数</div>
-                    </div>
-                    <div class="summary-item">
-                        <div class="number">${detectionState.stats.pass}</div>
-                        <div class="label">✓ 通过</div>
-                    </div>
-                    <div class="summary-item">
-                        <div class="number">${detectionState.stats.fail}</div>
-                        <div class="label">✗ 未通过</div>
-                    </div>
-                    <div class="summary-item">
-                        <div class="number">${detectionState.stats.error}</div>
-                        <div class="label">失败</div>
-                    </div>
-                </div>
-                <p style="text-align: center; color: #94A3B8; margin-top: 20px; font-size: 1.05em;">
-                    🎉 检测完成！共处理 ${detectionState.stats.total} 张图片
-                </p>
-            `;
-            batchSummary.innerHTML = summaryHtml;
+            const hasNonCompliant = detectionState.stats.fail > 0;
+
+            // 使用安全的DOM方法构建汇总信息
+            batchSummary.textContent = '';
+
+            // 汇总数据框
+            const summaryBox = document.createElement('div');
+            summaryBox.className = 'summary-box';
+
+            const summaryData = [
+                { number: detectionState.stats.total, label: '总数' },
+                { number: detectionState.stats.pass, label: '\u2713 通过' },
+                { number: detectionState.stats.fail, label: '\u2717 未通过' },
+                { number: detectionState.stats.error, label: '失败' }
+            ];
+
+            summaryData.forEach(item => {
+                const summaryItem = document.createElement('div');
+                summaryItem.className = 'summary-item';
+                const numDiv = document.createElement('div');
+                numDiv.className = 'number';
+                numDiv.textContent = item.number;
+                const labelDiv = document.createElement('div');
+                labelDiv.className = 'label';
+                labelDiv.textContent = item.label;
+                summaryItem.appendChild(numDiv);
+                summaryItem.appendChild(labelDiv);
+                summaryBox.appendChild(summaryItem);
+            });
+
+            batchSummary.appendChild(summaryBox);
+
+            // 完成提示文案
+            const completeMsg = document.createElement('p');
+            completeMsg.style.cssText = 'text-align: center; color: #94A3B8; margin-top: 20px; font-size: 1.05em;';
+            completeMsg.textContent = '\uD83C\uDF89 检测完成！共处理 ' + detectionState.stats.total + ' 张图片';
+            batchSummary.appendChild(completeMsg);
+
+            // 添加批量操作按钮（仅当有不合规图片时）
+            if (hasNonCompliant) {
+                const actionsDiv = document.createElement('div');
+                actionsDiv.className = 'batch-actions';
+
+                const fixAllBtn = document.createElement('button');
+                fixAllBtn.className = 'batch-action-button fix-all';
+                fixAllBtn.id = 'fixAllBtn';
+                fixAllBtn.textContent = '\uD83D\uDD27 一键修复所有 (' + detectionState.stats.fail + ' 张)';
+                fixAllBtn.addEventListener('click', fixAllImages);
+
+                const downloadAllBtn = document.createElement('button');
+                downloadAllBtn.className = 'batch-action-button download-all';
+                downloadAllBtn.id = 'downloadAllBtn';
+                downloadAllBtn.textContent = '\uD83D\uDCE6 一键下载所有 (ZIP)';
+                downloadAllBtn.disabled = true;
+                downloadAllBtn.addEventListener('click', downloadAllFixed);
+
+                actionsDiv.appendChild(fixAllBtn);
+                actionsDiv.appendChild(downloadAllBtn);
+                batchSummary.appendChild(actionsDiv);
+
+                // 修复进度条容器
+                const fixProgressContainer = document.createElement('div');
+                fixProgressContainer.className = 'fix-progress-container';
+                fixProgressContainer.id = 'fixProgressContainer';
+
+                const fixProgressHeader = document.createElement('div');
+                fixProgressHeader.className = 'fix-progress-header';
+
+                const fixProgressTitle = document.createElement('h4');
+                fixProgressTitle.textContent = '修复进度';
+                fixProgressHeader.appendChild(fixProgressTitle);
+
+                const fixProgressStats = document.createElement('div');
+                fixProgressStats.className = 'fix-progress-stats';
+
+                // 进度统计
+                const progressStat = document.createElement('div');
+                progressStat.className = 'fix-progress-stat';
+                progressStat.innerHTML = '进度: <strong><span id="fixProgressCurrent">0</span> / <span id="fixProgressTotal">0</span></strong>';
+                fixProgressStats.appendChild(progressStat);
+
+                const successStat = document.createElement('div');
+                successStat.className = 'fix-progress-stat';
+                successStat.innerHTML = '成功: <strong style="color: #10B981;"><span id="fixProgressSuccess">0</span></strong>';
+                fixProgressStats.appendChild(successStat);
+
+                const failedStat = document.createElement('div');
+                failedStat.className = 'fix-progress-stat';
+                failedStat.innerHTML = '失败: <strong style="color: #EF4444;"><span id="fixProgressFailed">0</span></strong>';
+                fixProgressStats.appendChild(failedStat);
+
+                fixProgressHeader.appendChild(fixProgressStats);
+                fixProgressContainer.appendChild(fixProgressHeader);
+
+                const barWrapper = document.createElement('div');
+                barWrapper.className = 'progress-bar-wrapper';
+                const bar = document.createElement('div');
+                bar.className = 'progress-bar';
+                bar.id = 'fixProgressBar';
+                bar.style.width = '0%';
+                bar.textContent = '0%';
+                barWrapper.appendChild(bar);
+                fixProgressContainer.appendChild(barWrapper);
+
+                batchSummary.appendChild(fixProgressContainer);
+            }
         }
 
         // 停止检测
@@ -2003,6 +2181,146 @@
                 card.innerHTML = originalHtml;
                 alert('修复失败: ' + error.message);
             });
+        }
+
+        // ===== 一键修复所有 =====
+        async function fixAllImages() {
+            const nonCompliant = detectionState.results.filter(r => r.status === 'success' && !r.compliant);
+            if (nonCompliant.length === 0) {
+                alert('没有需要修复的图片');
+                return;
+            }
+
+            const fixAllBtn = document.getElementById('fixAllBtn');
+            fixAllBtn.disabled = true;
+            fixAllBtn.textContent = '\uD83D\uDD27 修复中...';
+
+            // 显示修复进度条
+            const fixProgressContainer = document.getElementById('fixProgressContainer');
+            fixProgressContainer.classList.add('active');
+
+            document.getElementById('fixProgressTotal').textContent = nonCompliant.length;
+
+            let current = 0;
+            let successCount = 0;
+            let failedCount = 0;
+
+            for (const result of nonCompliant) {
+                current++;
+                document.getElementById('fixProgressCurrent').textContent = current;
+
+                // 更新进度条
+                const percent = Math.round((current / nonCompliant.length) * 100);
+                const fixBar = document.getElementById('fixProgressBar');
+                fixBar.style.width = percent + '%';
+                fixBar.textContent = percent + '%';
+
+                try {
+                    const response = await fetch('/fix_from_url', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({url: result.url, strategy: 'smart_fit'})
+                    });
+
+                    const data = await response.json();
+
+                    if (data.success) {
+                        result.fixed_image = data.fixed_image;
+                        result.fixed_filename = data.download_filename;
+                        successCount++;
+
+                        // 更新对应卡片的下载按钮
+                        const downloadBtn = document.getElementById('download-btn-' + result.index);
+                        if (downloadBtn) {
+                            downloadBtn.style.display = 'inline-block';
+                        }
+                    } else {
+                        failedCount++;
+                    }
+                } catch (error) {
+                    failedCount++;
+                }
+
+                document.getElementById('fixProgressSuccess').textContent = successCount;
+                document.getElementById('fixProgressFailed').textContent = failedCount;
+            }
+
+            // 修复完成
+            fixAllBtn.textContent = '\u2713 修复完成 (' + successCount + '/' + nonCompliant.length + ')';
+
+            // 启用一键下载按钮（如果有修复成功的图片）
+            if (successCount > 0) {
+                const downloadAllBtn = document.getElementById('downloadAllBtn');
+                downloadAllBtn.disabled = false;
+                downloadAllBtn.textContent = '\uD83D\uDCE6 一键下载所有 (ZIP) - ' + successCount + ' 张';
+            }
+        }
+
+        // ===== 一键下载所有修复后的图片为 ZIP =====
+        async function downloadAllFixed() {
+            const fixedResults = detectionState.results.filter(r => r.fixed_image);
+            if (fixedResults.length === 0) {
+                alert('没有已修复的图片可下载');
+                return;
+            }
+
+            const downloadAllBtn = document.getElementById('downloadAllBtn');
+            downloadAllBtn.disabled = true;
+            downloadAllBtn.textContent = '\uD83D\uDCE6 打包中...';
+
+            try {
+                const zip = new JSZip();
+                const usedNames = {};
+
+                fixedResults.forEach(result => {
+                    // fixed_image 格式为 "data:image/png;base64,..."
+                    const base64Data = result.fixed_image.split(',')[1];
+                    let filename = result.fixed_filename || ('image_' + result.index + '_fixed.png');
+
+                    // 处理重名：相同文件名追加序号
+                    if (usedNames[filename]) {
+                        usedNames[filename]++;
+                        const ext = filename.lastIndexOf('.') !== -1 ? filename.substring(filename.lastIndexOf('.')) : '';
+                        const name = filename.lastIndexOf('.') !== -1 ? filename.substring(0, filename.lastIndexOf('.')) : filename;
+                        filename = name + '_' + usedNames[filename] + ext;
+                    } else {
+                        usedNames[filename] = 1;
+                    }
+
+                    zip.file(filename, base64Data, {base64: true});
+                });
+
+                const blob = await zip.generateAsync({type: 'blob'});
+
+                // 生成带时间戳的文件名
+                const now = new Date();
+                const timestamp = now.getFullYear()
+                    + String(now.getMonth() + 1).padStart(2, '0')
+                    + String(now.getDate()).padStart(2, '0')
+                    + '_'
+                    + String(now.getHours()).padStart(2, '0')
+                    + String(now.getMinutes()).padStart(2, '0')
+                    + String(now.getSeconds()).padStart(2, '0');
+                const zipFilename = 'fixed_images_' + timestamp + '.zip';
+
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = zipFilename;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(link.href);
+
+                downloadAllBtn.textContent = '\u2713 下载完成';
+                setTimeout(() => {
+                    downloadAllBtn.disabled = false;
+                    downloadAllBtn.textContent = '\uD83D\uDCE6 一键下载所有 (ZIP) - ' + fixedResults.length + ' 张';
+                }, 2000);
+            } catch (error) {
+                alert('打包下载失败: ' + error.message);
+                downloadAllBtn.disabled = false;
+                downloadAllBtn.textContent = '\uD83D\uDCE6 一键下载所有 (ZIP)';
+            }
         }
 
         // 下载批量修复的图片

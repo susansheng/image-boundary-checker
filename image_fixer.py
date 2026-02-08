@@ -5,6 +5,7 @@
 """
 
 from PIL import Image, ImageDraw
+import numpy as np
 import re
 from urllib.parse import urlparse, parse_qs
 from io import BytesIO
@@ -219,13 +220,9 @@ def add_padding_to_safe_area(img):
 
 def extract_filename_from_url(url):
     """
-    从URL中提取文件名，优先提取数字标识
+    从URL中提取文件名：取最后一个斜杠到扩展名之间的部分
 
-    优先级：
-    1. 纯数字文件名（/12345.jpg → 12345）
-    2. 带数字的文件名（/image_123.jpg → image_123）
-    3. 查询参数ID（?id=456 → 456）
-    4. 默认命名（domain_timestamp）
+    例：https://example.com/path/my_image.jpg → my_image
 
     Args:
         url: 图片URL
@@ -235,32 +232,15 @@ def extract_filename_from_url(url):
     """
     try:
         parsed = urlparse(url)
-
-        # 1. 尝试从路径中提取文件名
         path = parsed.path
+
         if path:
-            # 获取最后一个路径段（文件名部分）
             filename = path.split('/')[-1]
-
-            # 移除扩展名
             name_without_ext = filename.rsplit('.', 1)[0] if '.' in filename else filename
-
-            # 如果文件名包含数字，使用它
-            if name_without_ext and re.search(r'\d', name_without_ext):
+            name_without_ext = name_without_ext.strip()
+            if name_without_ext:
                 return sanitize_filename(name_without_ext)
 
-        # 2. 尝试从查询参数中提取ID
-        query_params = parse_qs(parsed.query)
-        for key in ['id', 'ID', 'image_id', 'img_id']:
-            if key in query_params and query_params[key]:
-                return sanitize_filename(query_params[key][0])
-
-        # 3. 使用域名作为默认名称
-        domain = parsed.netloc.replace('.', '_')
-        if domain:
-            return sanitize_filename(domain)
-
-        # 4. 最后的备选方案
         return 'image_fixed'
 
     except Exception:
@@ -463,6 +443,45 @@ def smart_fit_to_safe_area(img):
         result = temp
 
     return result
+
+
+def remove_watermark(img, alpha_threshold=200, brightness_threshold=250,
+                     x_fraction=0.65, y_fraction=0.50):
+    """
+    去除右下角半透明白色水印
+
+    策略：在指定区域内，将"半透明 + 高亮度（白色）"的像素设为完全透明。
+    通过亮度过滤区分水印（白色文字）和车影（深色），确保车图不受影响。
+
+    Args:
+        img: PIL Image 对象
+        alpha_threshold: alpha 上限，低于此值且满足亮度条件的像素视为水印（默认 200）
+        brightness_threshold: 亮度下限，高于此值视为白色水印像素（默认 250）
+        x_fraction: 水印区域 X 起始比例（默认 0.65，即右侧 35%）
+        y_fraction: 水印区域 Y 起始比例（默认 0.50，即下半部分）
+
+    Returns:
+        PIL Image: 去除水印后的图片（原始尺寸）
+    """
+    img = img.copy().convert('RGBA')
+    pixels = np.array(img)
+    h, w = pixels.shape[:2]
+
+    y_start = int(h * y_fraction)
+    x_start = int(w * x_fraction)
+
+    region = pixels[y_start:, x_start:]
+    alpha = region[:, :, 3]
+    rgb = region[:, :, :3]
+    brightness = np.mean(rgb, axis=2)
+
+    # 水印 = 半透明 + 白色（高亮度）
+    mask = (alpha > 0) & (alpha < alpha_threshold) & (brightness > brightness_threshold)
+    region[mask] = [0, 0, 0, 0]
+
+    pixels[y_start:, x_start:] = region
+
+    return Image.fromarray(pixels)
 
 
 def get_fix_description(strategy):

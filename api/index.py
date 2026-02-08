@@ -20,6 +20,7 @@ from image_fixer import (
     smart_crop_to_safe_area,
     add_padding_to_safe_area,
     smart_fit_to_safe_area,
+    remove_watermark,
     extract_filename_from_url,
     sanitize_filename,
     get_fix_description
@@ -202,6 +203,21 @@ def check_image_compliance(image_data):
                 result['errors'].append(f"图片过小，没有撑满安全区域（车图尺寸: {content_width}x{content_height}，安全区: {safe_width}x{safe_height}）")
                 result['info']['too_small'] = True
 
+        # 检查安全区域内是否有水印（白色半透明像素）
+        import numpy as np
+        px = np.array(img)
+        wm_region = px[int(height * 0.50):, int(width * 0.65):]
+        wm_alpha = wm_region[:, :, 3]
+        wm_brightness = np.mean(wm_region[:, :, :3], axis=2)
+        wm_mask = (wm_alpha > 0) & (wm_alpha < 200) & (wm_brightness > 250)
+        watermark_count = int(np.sum(wm_mask))
+
+        if watermark_count > 20:
+            result['compliant'] = False
+            result['errors'].append(f"安全区域有水印（检测到 {watermark_count} 个水印像素）")
+            result['info']['has_watermark'] = True
+            result['info']['watermark_pixel_count'] = watermark_count
+
         # 生成带红色边框的预览图（叠加模板边框）
         preview_img = img.copy().convert('RGBA')
 
@@ -302,7 +318,12 @@ def fix_image():
         # 检测原图是否已经符合规范
         original_check = check_image_compliance(image_data)
 
-        # 应用修复策略
+        # 第一步：去除水印（如果检测到水印）
+        has_watermark = original_check['info'].get('has_watermark', False)
+        if has_watermark:
+            img = remove_watermark(img)
+
+        # 第二步：应用修复策略
         if strategy == 'smart_crop':
             fixed_img = smart_crop_to_safe_area(img)
         elif strategy == 'add_padding':
@@ -338,6 +359,12 @@ def fix_image():
         name_without_ext = original_filename.rsplit('.', 1)[0] if '.' in original_filename else original_filename
         download_filename = f"{sanitize_filename(name_without_ext)}_fixed.png"
 
+        # 构建修复说明
+        changes = []
+        if has_watermark:
+            changes.append('已去除水印')
+        changes.append('已调整内容到安全区域内')
+
         # 返回结果
         return jsonify({
             'success': True,
@@ -348,7 +375,7 @@ def fix_image():
             'fix_info': {
                 'strategy': get_fix_description(strategy),
                 'original_size': [original_width, original_height],
-                'changes_made': '已应用修复策略，内容调整到安全区域内'
+                'changes_made': '；'.join(changes)
             }
         })
 
@@ -387,7 +414,12 @@ def fix_from_url():
         # 检测原图是否已经符合规范
         original_check = check_image_compliance(image_data)
 
-        # 应用修复策略
+        # 第一步：去除水印（如果检测到水印）
+        has_watermark = original_check['info'].get('has_watermark', False)
+        if has_watermark:
+            img = remove_watermark(img)
+
+        # 第二步：应用修复策略
         if strategy == 'smart_crop':
             fixed_img = smart_crop_to_safe_area(img)
         elif strategy == 'add_padding':
@@ -422,6 +454,12 @@ def fix_from_url():
         filename = extract_filename_from_url(url)
         download_filename = f"{filename}.png"
 
+        # 构建修复说明
+        changes = []
+        if has_watermark:
+            changes.append('已去除水印')
+        changes.append('已调整内容到安全区域内')
+
         # 返回结果
         return jsonify({
             'success': True,
@@ -432,7 +470,7 @@ def fix_from_url():
             'fix_info': {
                 'strategy': get_fix_description(strategy),
                 'original_size': [original_width, original_height],
-                'changes_made': '已应用修复策略，内容调整到安全区域内'
+                'changes_made': '；'.join(changes)
             }
         })
 
@@ -480,6 +518,127 @@ def upload():
             }), 500
 
     return jsonify({'error': '未知错误'}), 500
+
+
+@app.route('/remove_watermark', methods=['POST'])
+def remove_watermark_route():
+    """
+    去除图片右下角水印
+    请求: file (图片文件)
+    响应: {success, cleaned_image, preview_image, download_filename}
+    """
+    if 'file' not in request.files:
+        return jsonify({'error': '没有上传文件'}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': '没有选择文件'}), 400
+
+    try:
+        image_data = file.read()
+        img = Image.open(BytesIO(image_data))
+        original_width, original_height = img.size
+
+        cleaned_img = remove_watermark(img)
+
+        cleaned_buffer = BytesIO()
+        cleaned_img.save(cleaned_buffer, format='PNG')
+        cleaned_buffer.seek(0)
+        cleaned_img_str = base64.b64encode(cleaned_buffer.getvalue()).decode()
+        cleaned_image_data = f"data:image/png;base64,{cleaned_img_str}"
+
+        preview_img = cleaned_img.resize((300, 200), Image.Resampling.LANCZOS)
+        if preview_img.mode != 'RGBA':
+            preview_img = preview_img.convert('RGBA')
+        preview_with_border = add_template_border(preview_img)
+
+        preview_buffer = BytesIO()
+        preview_with_border.save(preview_buffer, format='PNG')
+        preview_img_str = base64.b64encode(preview_buffer.getvalue()).decode()
+        preview_image_data = f"data:image/png;base64,{preview_img_str}"
+
+        original_filename = file.filename or 'image'
+        name_without_ext = original_filename.rsplit('.', 1)[0] if '.' in original_filename else original_filename
+        download_filename = f"{sanitize_filename(name_without_ext)}_no_watermark.png"
+
+        return jsonify({
+            'success': True,
+            'cleaned_image': cleaned_image_data,
+            'preview_image': preview_image_data,
+            'download_filename': download_filename,
+            'original_size': [original_width, original_height]
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'去除水印失败: {str(e)}',
+            'traceback': traceback.format_exc()
+        }), 500
+
+
+@app.route('/remove_watermark_url', methods=['POST'])
+def remove_watermark_url_route():
+    """
+    从URL下载图片并去除水印（用于批量处理）
+    请求: {url}
+    响应: 同 /remove_watermark
+    """
+    data = request.get_json()
+
+    if not data or 'url' not in data:
+        return jsonify({'error': '缺少URL参数'}), 400
+
+    url = data['url']
+
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        image_data = response.content
+
+        img = Image.open(BytesIO(image_data))
+        original_width, original_height = img.size
+
+        cleaned_img = remove_watermark(img)
+
+        cleaned_buffer = BytesIO()
+        cleaned_img.save(cleaned_buffer, format='PNG')
+        cleaned_buffer.seek(0)
+        cleaned_img_str = base64.b64encode(cleaned_buffer.getvalue()).decode()
+        cleaned_image_data = f"data:image/png;base64,{cleaned_img_str}"
+
+        preview_img = cleaned_img.resize((300, 200), Image.Resampling.LANCZOS)
+        if preview_img.mode != 'RGBA':
+            preview_img = preview_img.convert('RGBA')
+        preview_with_border = add_template_border(preview_img)
+
+        preview_buffer = BytesIO()
+        preview_with_border.save(preview_buffer, format='PNG')
+        preview_img_str = base64.b64encode(preview_buffer.getvalue()).decode()
+        preview_image_data = f"data:image/png;base64,{preview_img_str}"
+
+        filename = extract_filename_from_url(url)
+        download_filename = f"{filename}_no_watermark.png"
+
+        return jsonify({
+            'success': True,
+            'cleaned_image': cleaned_image_data,
+            'preview_image': preview_image_data,
+            'download_filename': download_filename,
+            'original_size': [original_width, original_height]
+        })
+
+    except requests.exceptions.RequestException as e:
+        return jsonify({
+            'success': False,
+            'error': f'下载图片失败: {str(e)}'
+        }), 500
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'去除水印失败: {str(e)}',
+            'traceback': traceback.format_exc()
+        }), 500
 
 
 @app.route('/batch_upload', methods=['POST'])
