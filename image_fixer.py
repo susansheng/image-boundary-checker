@@ -424,9 +424,9 @@ def smart_fit_to_safe_area(img):
         new_height = int(original_height * scale_ratio)
         scaled_img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
-        # 居中放置
-        paste_x = (original_width - new_width) // 2
-        paste_y = (original_height - new_height) // 2
+        # 居中放置：让车图内容中心对准安全区域中心
+        paste_x = int(scale_x * (safe_center_x - car_center_x * scale_ratio))
+        paste_y = int(scale_y * (safe_center_y - car_center_y * scale_ratio))
         result.paste(scaled_img, (paste_x, paste_y))
     else:
         # 只需要偏移，不需要缩放
