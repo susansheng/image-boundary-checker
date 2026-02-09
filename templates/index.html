@@ -1674,12 +1674,13 @@
         function addResultCard(result) {
             const card = document.createElement('div');
             card.className = `result-card ${result.compliant ? 'success' : (result.status === 'failed' ? 'failed' : 'error')}`;
+            card.id = 'result-card-' + result.index;
 
             let imageHtml = '';
             if (result.preview) {
-                imageHtml = `<img src="${result.preview}" class="card-image" alt="检测结果">`;
+                imageHtml = `<img src="${result.preview}" class="card-image" id="card-image-${result.index}" alt="检测结果">`;
             } else {
-                imageHtml = `<div class="card-image" style="display: flex; align-items: center; justify-content: center; color: #475569; background: #ACBED4; min-height: 180px; font-weight: 500;">无预览图</div>`;
+                imageHtml = `<div class="card-image" id="card-image-${result.index}" style="display: flex; align-items: center; justify-content: center; color: #475569; background: #ACBED4; min-height: 180px; font-weight: 500;">无预览图</div>`;
             }
 
             let statusHtml = '';
@@ -1713,7 +1714,7 @@
                 let fixBtn = '';
                 if (!result.compliant) {
                     fixBtn = `
-                        <button onclick="fixBatchImage(${result.index})" class="button" style="font-size: 0.85em; padding: 6px 12px;">
+                        <button onclick="fixBatchImage(${result.index})" class="button" id="fix-btn-${result.index}" style="font-size: 0.85em; padding: 6px 12px;">
                             🔧 修复
                         </button>`;
                 }
@@ -2170,8 +2171,13 @@
                     result.fixed_image = data.fixed_image;
                     result.fixed_filename = data.download_filename;
                     card.innerHTML = originalHtml;
-                    document.getElementById(`download-btn-${index}`).style.display = 'inline-block';
-                    alert('修复成功！点击下载按钮保存图片');
+                    // 更新卡片图片为修复后的预览
+                    const cardImg = document.getElementById('card-image-' + index);
+                    if (cardImg) cardImg.src = data.preview_image;
+                    // 隐藏修复按钮，显示下载按钮
+                    const fixBtn = document.getElementById('fix-btn-' + index);
+                    if (fixBtn) fixBtn.style.display = 'none';
+                    document.getElementById('download-btn-' + index).style.display = 'inline-block';
                 } else {
                     card.innerHTML = originalHtml;
                     alert('修复失败: ' + (data.error || '未知错误'));
@@ -2229,7 +2235,12 @@
                         result.fixed_filename = data.download_filename;
                         successCount++;
 
-                        // 更新对应卡片的下载按钮
+                        // 更新卡片图片为修复后的预览
+                        const cardImg = document.getElementById('card-image-' + result.index);
+                        if (cardImg) cardImg.src = data.preview_image;
+                        // 隐藏修复按钮，显示下载按钮
+                        const fixBtn = document.getElementById('fix-btn-' + result.index);
+                        if (fixBtn) fixBtn.style.display = 'none';
                         const downloadBtn = document.getElementById('download-btn-' + result.index);
                         if (downloadBtn) {
                             downloadBtn.style.display = 'inline-block';
