@@ -152,27 +152,36 @@ def check_image_compliance(image_data):
         if img.mode != 'RGBA':
             img = img.convert('RGBA')
 
-        # 像素位置检查
-        out_of_bounds_pixels = []
+        # 像素位置检查（分两层：容差内警告，容差外不通过）
+        tolerance = 2  # 绿线外允许 2 像素容差
+        warning_pixels = []  # 超出绿线但在容差内
+        error_pixels = []    # 超出容差范围
 
         for y in range(height):
             for x in range(width):
                 pixel = img.getpixel((x, y))
                 alpha = pixel[3] if len(pixel) == 4 else 255
 
-                # 如果像素不透明，检查是否在安全区域内
                 if alpha > 10:
-                    if (x < SAFE_AREA['left'] or x > SAFE_AREA['right'] or
-                        y < SAFE_AREA['top'] or y > SAFE_AREA['bottom']):
-                        out_of_bounds_pixels.append((x, y))
+                    outside_safe = (x < SAFE_AREA['left'] or x > SAFE_AREA['right'] or
+                                    y < SAFE_AREA['top'] or y > SAFE_AREA['bottom'])
+                    outside_tolerance = (x < SAFE_AREA['left'] - tolerance or x > SAFE_AREA['right'] + tolerance or
+                                         y < SAFE_AREA['top'] - tolerance or y > SAFE_AREA['bottom'] + tolerance)
 
-        if out_of_bounds_pixels:
+                    if outside_tolerance:
+                        error_pixels.append((x, y))
+                    elif outside_safe:
+                        warning_pixels.append((x, y))
+
+        if error_pixels:
             result['compliant'] = False
-            result['errors'].append(f"发现 {len(out_of_bounds_pixels)} 个像素超出安全区域（与红色边框重叠）")
-            result['info']['out_of_bounds_count'] = len(out_of_bounds_pixels)
+            result['errors'].append(f"发现 {len(error_pixels)} 个像素超出安全区域（超过容差范围）")
+            result['info']['out_of_bounds_count'] = len(error_pixels)
+            result['info']['out_of_bounds_samples'] = error_pixels[:10]
 
-            # 保存前10个超出位置作为示例
-            result['info']['out_of_bounds_samples'] = out_of_bounds_pixels[:10]
+        if warning_pixels and not error_pixels:
+            result['warnings'].append(f"有 {len(warning_pixels)} 个像素轻微超出安全区域（在容差范围内，不影响通过）")
+            result['info']['out_of_bounds_warning_count'] = len(warning_pixels)
 
         # 检查图片是否过小（内容未撑满安全区域）
         # 找到所有不透明像素的边界框
@@ -191,14 +200,23 @@ def check_image_compliance(image_data):
                     max_y = max(max_y, y)
 
         if has_content:
-            content_width = max_x - min_x + 1
-            content_height = max_y - min_y + 1
-            safe_width = SAFE_AREA['right'] - SAFE_AREA['left']
-            safe_height = SAFE_AREA['bottom'] - SAFE_AREA['top']
+            inward_tolerance = 4  # 绿线内允许 4 像素容差
 
-            # 如果车图太小（宽度和高度都小于安全区域的98%）
-            if (content_width < safe_width * 0.98 and
-                content_height < safe_height * 0.98):
+            # 逐边检查：车图边缘是否撑到安全线附近（容差 2px）
+            left_ok = min_x <= SAFE_AREA['left'] + inward_tolerance
+            right_ok = max_x >= SAFE_AREA['right'] - inward_tolerance
+            top_ok = min_y <= SAFE_AREA['top'] + inward_tolerance
+            bottom_ok = max_y >= SAFE_AREA['bottom'] - inward_tolerance
+
+            # 水平或垂直至少一个方向有一边撑到位即可
+            h_ok = left_ok or right_ok
+            v_ok = top_ok or bottom_ok
+
+            if not (h_ok or v_ok):
+                content_width = max_x - min_x + 1
+                content_height = max_y - min_y + 1
+                safe_width = SAFE_AREA['right'] - SAFE_AREA['left']
+                safe_height = SAFE_AREA['bottom'] - SAFE_AREA['top']
                 result['compliant'] = False
                 result['errors'].append(f"图片过小，没有撑满安全区域（车图尺寸: {content_width}x{content_height}，安全区: {safe_width}x{safe_height}）")
                 result['info']['too_small'] = True
