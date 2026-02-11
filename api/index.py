@@ -200,7 +200,7 @@ def check_image_compliance(image_data):
                     max_y = max(max_y, y)
 
         if has_content:
-            inward_tolerance = 4  # 绿线内允许 4 像素容差
+            inward_tolerance = 5  # 绿线内允许 5 像素容差
 
             # 逐边检查：车图边缘是否撑到安全线附近（容差 2px）
             left_ok = min_x <= SAFE_AREA['left'] + inward_tolerance

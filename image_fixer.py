@@ -400,10 +400,9 @@ def smart_fit_to_safe_area(img):
     is_too_small = (car_width < safe_width * 0.98 and car_height < safe_height * 0.98)
 
     if is_overflow or is_too_small:
-        # 计算宽度和高度的缩放比例（往内缩 2px，给抗锯齿留余量）
-        margin = 2
-        target_width = safe_width - margin * 2
-        target_height = safe_height - margin * 2
+        # 计算宽度和高度的缩放比例
+        target_width = 264
+        target_height = 144
         width_scale = target_width / car_width
         height_scale = target_height / car_height
 
